@@ -32,7 +32,7 @@ def train_bpe_tokenizer(
 
     # Delete special tokens from data
     for special_token in special_tokens:
-        text = text.replace(special_token, " ")
+        text = text.replace(special_token, "")
     # Pre-tokenization
     PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
     pre_tokens = [m.group(0) for m in re.finditer(PAT, text)]
