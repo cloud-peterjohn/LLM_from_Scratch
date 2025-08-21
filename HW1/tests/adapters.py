@@ -9,6 +9,11 @@ import numpy.typing as npt
 import torch
 from torch import Tensor
 
+import sys
+
+sys.path.append("./")
+from cs336_basics.bpe_train import train_bpe_tokenizer
+
 
 def run_linear(
     d_in: int,
@@ -452,7 +457,9 @@ def run_cross_entropy(
     raise NotImplementedError
 
 
-def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
+def run_gradient_clipping(
+    parameters: Iterable[torch.nn.Parameter], max_l2_norm: float
+) -> None:
     """Given a set of parameters, clip their combined gradients to have l2 norm at most max_l2_norm.
 
     Args:
@@ -589,4 +596,6 @@ def run_train_bpe(
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
     """
-    raise NotImplementedError
+    return train_bpe_tokenizer(
+        input_path=input_path, max_vocab_size=vocab_size, special_tokens=special_tokens
+    )
