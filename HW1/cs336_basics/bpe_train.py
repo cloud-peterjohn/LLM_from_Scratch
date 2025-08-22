@@ -1,6 +1,8 @@
 import os
+import time
 import regex as re
 from typing import BinaryIO
+from multiprocessing import Pool
 from collections import defaultdict
 
 
@@ -53,11 +55,21 @@ def find_chunk_boundaries(
     return sorted(set(chunk_boundaries))
 
 
+def pre_tokenize_chunk(chunk, special_tokens):
+    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    # Remove special tokens in chunk
+    for special_token in special_tokens:
+        chunk = chunk.replace(special_token, "")
+    # Pre-tokenization
+    pre_tokens = [m.group(0) for m in re.finditer(PAT, chunk)]
+    return [pt.encode("utf-8") for pt in pre_tokens]
+
+
 def train_bpe_tokenizer(
     input_path: str,
     max_vocab_size: int,
     special_tokens: list[str],
-    num_processes: int = 4,
+    num_processes: int = 8,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     """
     input_path: str Path to a text file with BPE tokenizer training data.
@@ -78,6 +90,7 @@ def train_bpe_tokenizer(
             continue
 
     # Pre-tokenization
+    pre_tokenization_start = time.time()
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"Input file not found: {input_path}")
     with open(input_path, "rb") as f:
@@ -85,18 +98,24 @@ def train_bpe_tokenizer(
         boundaries = find_chunk_boundaries(
             f, num_processes, special_tokens[0].encode("utf-8")
         )
-        tokens = []
-        PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+        chunk_texts = []
         for start, end in zip(boundaries[:-1], boundaries[1:]):
             # Read chunk data
             f.seek(start)  # Move file pointer to start of current chunk
             chunk = f.read(end - start).decode("utf-8", errors="ignore")
-            # Remove special tokens in chunk
-            for special_token in special_tokens:
-                chunk = chunk.replace(special_token, "")
-            # Pre-tokenization
-            pre_tokens = [m.group(0) for m in re.finditer(PAT, chunk)]
-            tokens.extend([pt.encode("utf-8") for pt in pre_tokens])
+            chunk_texts.append(chunk)
+        # Pre-tokenize chunks in parallel
+        with Pool(processes=num_processes) as pool:
+            results = pool.starmap(
+                pre_tokenize_chunk, [(chunk, special_tokens) for chunk in chunk_texts]
+            )
+        tokens = []
+        for chunk_tokens in results:
+            tokens.extend(chunk_tokens)
+    pre_tokenization_end = time.time()
+    print(
+        f"Pre-tokenization took {pre_tokenization_end - pre_tokenization_start:.2f} seconds"
+    )
     print(f"Initial vocabulary size: {len(vocab)}, Initial tokens: {len(tokens)}")
 
     # Train BPE
@@ -145,11 +164,11 @@ def train_bpe_tokenizer(
         print(
             f">>> Training BPE: Merged {best_pair} -> {merged_token}, Vocab size: {len(vocab)} / {max_vocab_size}"
         )
-    print(f"Final vocabulary: {vocab}")
+    print(f"Final vocabulary: {vocab.values()}")
     return vocab, merges_history
 
 
-if __name__ == "__main__":
+def test():
     input_path = "HW1/data/TinyStoriesV2-GPT4-valid.txt"
     vocab_size = 300
     special_tokens = ["<|endoftext|>"]
