@@ -70,6 +70,7 @@ def train_bpe_tokenizer(
     max_vocab_size: int,
     special_tokens: list[str],
     num_processes: int = 8,
+    save_dir: str = "./HW1/results/",
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     """
     input_path: str Path to a text file with BPE tokenizer training data.
@@ -165,11 +166,23 @@ def train_bpe_tokenizer(
             f">>> Training BPE: Merged {best_pair} -> {merged_token}, Vocab size: {len(vocab)} / {max_vocab_size}"
         )
     print(f"Final vocabulary: {vocab.values()}")
+
+    # Save vocabulary
+    os.makedirs(save_dir, exist_ok=True)
+    vocab_path = os.path.join(save_dir, "bpe_tokenizer.json")
+    with open(vocab_path, "w", encoding="utf-8") as f:
+        for token_id, token_bytes in vocab.items():
+            f.write(f"{token_id}: {token_bytes.decode('utf-8')}\n")
     return vocab, merges_history
 
 
 def test():
-    input_path = "HW1/data/TinyStoriesV2-GPT4-valid.txt"
-    vocab_size = 300
+    # input_path = "HW1/data/TinyStoriesV2-GPT4-valid.txt"
+    # vocab_size = 300
+    input_path = "HW1/data/TinyStoriesV2-GPT4-train.txt"
+    vocab_size = 10000
     special_tokens = ["<|endoftext|>"]
     vocab, merges = train_bpe_tokenizer(input_path, vocab_size, special_tokens)
+
+if __name__ == "__main__":
+    test()
