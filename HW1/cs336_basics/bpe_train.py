@@ -1,9 +1,63 @@
 import os
-from collections import defaultdict
 import regex as re
+from typing import BinaryIO
+from collections import defaultdict
+
+
+def find_chunk_boundaries(
+    file: BinaryIO,
+    desired_num_chunks: int,
+    split_special_token: bytes,
+) -> list[int]:
+    """
+    Chunk the file into parts that can be counted independently.
+    May return fewer chunks if the boundaries end up overlapping.
+    """
+    assert isinstance(
+        split_special_token, bytes
+    ), "Must represent special token as a bytestring"
+
+    # Get total file size in bytes
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)
+
+    chunk_size = file_size // desired_num_chunks
+
+    # Initial guesses for chunk boundary locations, uniformly spaced
+    # Chunks start on previous index, don't include last index
+    chunk_boundaries = [i * chunk_size for i in range(desired_num_chunks + 1)]
+    chunk_boundaries[-1] = file_size
+
+    mini_chunk_size = 4096  # Read ahead by 4k bytes at a time
+
+    for bi in range(1, len(chunk_boundaries) - 1):
+        initial_position = chunk_boundaries[bi]
+        file.seek(initial_position)  # Start at boundary guess
+        while True:
+            mini_chunk = file.read(mini_chunk_size)  # Read a mini chunk
+
+            # If EOF, this boundary should be at the end of the file
+            if mini_chunk == b"":
+                chunk_boundaries[bi] = file_size
+                break
+
+            # Find the special token in the mini chunk
+            found_at = mini_chunk.find(split_special_token)
+            if found_at != -1:
+                chunk_boundaries[bi] = initial_position + found_at
+                break
+            initial_position += mini_chunk_size
+
+    # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
+    return sorted(set(chunk_boundaries))
+
 
 def train_bpe_tokenizer(
-    input_path: str, max_vocab_size: int, special_tokens: list[str]
+    input_path: str,
+    max_vocab_size: int,
+    special_tokens: list[str],
+    num_processes: int = 4,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     """
     input_path: str Path to a text file with BPE tokenizer training data.
@@ -23,21 +77,27 @@ def train_bpe_tokenizer(
             # already exists in vocab, skip
             continue
 
-    # Read data
+    # Pre-tokenization
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"Input file not found: {input_path}")
     with open(input_path, "rb") as f:
-        data = f.read()
-    text = data.decode("utf-8")
-
-    # Delete special tokens from data
-    for special_token in special_tokens:
-        text = text.replace(special_token, "")
-    # Pre-tokenization
-    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-    pre_tokens = [m.group(0) for m in re.finditer(PAT, text)]
-    tokens = [pt.encode("utf-8") for pt in pre_tokens]
-    print(f'Initial vocabulary size: {len(vocab)}, Initial tokens: {len(tokens)}')
+        # Chunk boundaries
+        boundaries = find_chunk_boundaries(
+            f, num_processes, special_tokens[0].encode("utf-8")
+        )
+        tokens = []
+        PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+        for start, end in zip(boundaries[:-1], boundaries[1:]):
+            # Read chunk data
+            f.seek(start)  # Move file pointer to start of current chunk
+            chunk = f.read(end - start).decode("utf-8", errors="ignore")
+            # Remove special tokens in chunk
+            for special_token in special_tokens:
+                chunk = chunk.replace(special_token, "")
+            # Pre-tokenization
+            pre_tokens = [m.group(0) for m in re.finditer(PAT, chunk)]
+            tokens.extend([pt.encode("utf-8") for pt in pre_tokens])
+    print(f"Initial vocabulary size: {len(vocab)}, Initial tokens: {len(tokens)}")
 
     # Train BPE
     merges_history = []  # list of (token1, token2)
@@ -82,8 +142,10 @@ def train_bpe_tokenizer(
                     new_tokens.append(tokens[curr_idx])
                     curr_idx += 1
         tokens = new_tokens
-        print(f'>>> Training BPE: Merged {best_pair} -> {merged_token}, Vocab size: {len(vocab)} / {max_vocab_size}')
-    print(f'Final vocabulary: {vocab}')
+        print(
+            f">>> Training BPE: Merged {best_pair} -> {merged_token}, Vocab size: {len(vocab)} / {max_vocab_size}"
+        )
+    print(f"Final vocabulary: {vocab}")
     return vocab, merges_history
 
 
